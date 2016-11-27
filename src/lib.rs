@@ -10,16 +10,22 @@ use mongodb::db::ThreadedDatabase;
 use mongodb::coll::options::{FindOptions, CursorType};
 use chrono::{DateTime, UTC, TimeZone};
 
+macro_rules! require_field {
+    ($doc:ident.$method:ident($key:expr)) => (
+        try!($doc.$method($key).map_err(|e| OplogError::MissingField(e, Some($key))))
+    )
+}
+
 #[derive(Debug)]
 pub enum OplogError {
-    MissingField(bson::ValueAccessError),
+    MissingField(bson::ValueAccessError, /* missing fieldname */ Option<&'static str>),
     Database(mongodb::Error),
     UnknownOperation(String),
 }
 
 impl From<bson::ValueAccessError> for OplogError {
     fn from(original: bson::ValueAccessError) -> OplogError {
-        OplogError::MissingField(original)
+        OplogError::MissingField(original, None)
     }
 }
 
@@ -55,12 +61,12 @@ pub enum Kind<'a> {
 
 impl<'a> Operation<'a> {
     pub fn new(document: &'a bson::Document) -> Result<Operation<'a>> {
-        let op = try!(document.get_str("op"));
-        let ts = try!(document.get_time_stamp("ts"));
+        let op = require_field!(document.get_str("op"));
+        let ts = require_field!(document.get_time_stamp("ts"));
 
         Ok(Operation {
-            id: try!(document.get_i64("h")),
-            document: try!(document.get_document("o")),
+            id: require_field!(document.get_i64("h")),
+            document: require_field!(document.get_document("o")),
 
             timestamp: timestamp_to_datetime(ts),
             kind: try!(Kind::parse(op, document)),
@@ -74,7 +80,7 @@ impl<'a> Kind<'a> {
             "n" => Kind::Noop,
             "i" => {
                 Kind::Insert {
-                    namespace: try!(document.get_str("ns")),
+                    namespace: require_field!(document.get_str("ns")),
                 }
             },
             _ => return Err(OplogError::UnknownOperation(op.to_owned())),
@@ -116,7 +122,7 @@ impl Oplog {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bson::Bson;
+    use bson::{Bson, ValueAccessError};
     use bson::oid::ObjectId;
     use chrono::{UTC, TimeZone};
 
@@ -209,5 +215,53 @@ mod tests {
         //         namespace: "hello",
         //     }
         // );
+    }
+
+    #[test]
+    fn operation_errors_with_missing_key() {
+        let oid = ObjectId::with_string("583050b26813716e505a5bf2").unwrap();
+        let ref doc = doc! {
+            "h" => (-1742072865587022793i64),
+            "v" => 2,
+            "op" => "i",
+            "ns" => "foo.bar",
+            "o" => {
+                "_id" => (Bson::ObjectId(oid.clone())),
+                "foo" => "bar"
+            }
+        };
+        let operation = Operation::new(doc);
+
+        // Can't use equality check as Mongodb's Error type doesn't implement PartialEq.
+        if let Err(OplogError::MissingField(ValueAccessError::NotPresent, Some("ts"))) = operation {
+            // OK - TODO: should implement `Display` which prints a hint to the user about what key
+            // they missed in their document.
+        } else {
+            panic!("Unexpected result: {:?}", operation);
+        }
+    }
+
+    #[test]
+    fn operation_errors_with_insert_specific_missing_key() {
+        let oid = ObjectId::with_string("583050b26813716e505a5bf2").unwrap();
+        let ref doc = doc! {
+            "ts" => (Bson::TimeStamp(1479561394 << 32)),
+            "h" => (-1742072865587022793i64),
+            "v" => 2,
+            "op" => "i",
+            "o" => {
+                "_id" => (Bson::ObjectId(oid.clone())),
+                "foo" => "bar"
+            }
+        };
+        let operation = Operation::new(doc);
+
+        // Can't use equality check as Mongodb's Error type doesn't implement PartialEq.
+        if let Err(OplogError::MissingField(ValueAccessError::NotPresent, Some("ns"))) = operation {
+            // OK - TODO: should implement `Display` which prints a hint to the user about what key
+            // they missed in their document.
+        } else {
+            panic!("Unexpected result: {:?}", operation);
+        }
     }
 }
