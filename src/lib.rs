@@ -36,13 +36,21 @@ pub struct Oplog {
 }
 
 #[derive(PartialEq, Debug)]
-pub enum Operation<'a> {
-    Insert { id: i64, timestamp: DateTime<UTC>, namespace: &'a str, document: &'a bson::Document },
-    Update { id: i64, namespace: &'a str },
-    Delete { id: i64, namespace: &'a str },
-    Command { id: i64, namespace: &'a str },
-    Database { id: i64, namespace: &'a str },
-    Noop { id: i64, timestamp: DateTime<UTC>, document: &'a bson::Document },
+pub struct Operation<'a> {
+    id: i64,
+    timestamp: DateTime<UTC>,
+    document: &'a bson::Document,
+    kind: Kind<'a>
+}
+
+#[derive(PartialEq, Debug)]
+pub enum Kind<'a> {
+    Insert { namespace: &'a str },
+    Update,
+    Delete,
+    Command,
+    Database,
+    Noop,
 }
 
 impl<'a> Operation<'a> {
@@ -55,23 +63,31 @@ impl<'a> Operation<'a> {
             _ => Err(OplogError::UnknownOperation(op.to_owned())),
         }
     }
+
+    fn new_with_kind<'f>(document: &'f bson::Document, kind: Kind<'f>) -> Result<Operation<'f>> {
+        let h = try!(document.get_i64("h"));
+        let ts = try!(document.get_time_stamp("ts"));
+        let o = try!(document.get_document("o"));
+
+        Ok(Operation {
+            id: h,
+            timestamp: timestamp_to_datetime(ts),
+            document: o,
+            kind: kind
+        })
+    }
 }
 
 fn document_to_noop(document: &bson::Document) -> Result<Operation> {
-    let h = try!(document.get_i64("h"));
-    let ts = try!(document.get_time_stamp("ts"));
-    let o = try!(document.get_document("o"));
-
-    Ok(Operation::Noop { id: h, timestamp: timestamp_to_datetime(ts), document: o })
+    Operation::new_with_kind(document, Kind::Noop)
 }
 
 fn document_to_insert(document: &bson::Document) -> Result<Operation> {
-    let h = try!(document.get_i64("h"));
-    let ts = try!(document.get_time_stamp("ts"));
-    let o = try!(document.get_document("o"));
-    let ns = try!(document.get_str("ns"));
+    let kind = Kind::Insert {
+        namespace: try!(document.get_str("ns"))
+    };
 
-    Ok(Operation::Insert { id: h, timestamp: timestamp_to_datetime(ts), document: o, namespace: ns })
+    Operation::new_with_kind(document, kind)
 }
 
 fn timestamp_to_datetime(timestamp: i64) -> DateTime<UTC> {
@@ -147,10 +163,11 @@ mod tests {
         let operation = Operation::new(&doc).unwrap();
         assert_eq_pretty!(
             operation,
-            Operation::Noop {
+            Operation {
                 id: -2135725856567446411i64,
                 timestamp: UTC.timestamp(1479419535, 0),
-                document: &doc! { "msg" => "initiating set" }
+                document: &doc! { "msg" => "initiating set" },
+                kind: Kind::Noop,
             }
         );
     }
@@ -173,14 +190,14 @@ mod tests {
 
         assert_eq_pretty!(
             operation,
-            Operation::Insert {
+            Operation {
                 id: -1742072865587022793i64,
                 timestamp: UTC.timestamp(1479561394, 0),
-                namespace: "foo.bar",
                 document: &doc! {
                     "_id" => (Bson::ObjectId(oid)),
                     "foo" => "bar"
-                }
+                },
+                kind: Kind::Insert { namespace: "foo.bar" }
             }
         );
 
