@@ -57,16 +57,7 @@ impl<'a> Operation<'a> {
     pub fn new(document: &'a bson::Document) -> Result<Operation<'a>> {
         let op = try!(document.get_str("op"));
 
-        let kind = match op {
-            "n" => Kind::Noop,
-            "i" => {
-                Kind::Insert {
-                    namespace: try!(document.get_str("ns")),
-                }
-            },
-            _ => return Err(OplogError::UnknownOperation(op.to_owned())),
-        };
-
+        let kind = try!(Kind::parse(op, document));
         let h = try!(document.get_i64("h"));
         let ts = try!(document.get_time_stamp("ts"));
         let o = try!(document.get_document("o"));
@@ -76,6 +67,20 @@ impl<'a> Operation<'a> {
             timestamp: timestamp_to_datetime(ts),
             document: o,
             kind: kind
+        })
+    }
+}
+
+impl<'a> Kind<'a> {
+    fn parse(op: &'a str, document: &'a bson::Document) -> Result<Kind<'a>> {
+        Ok(match op {
+            "n" => Kind::Noop,
+            "i" => {
+                Kind::Insert {
+                    namespace: try!(document.get_str("ns")),
+                }
+            },
+            _ => return Err(OplogError::UnknownOperation(op.to_owned())),
         })
     }
 }
