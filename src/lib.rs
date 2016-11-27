@@ -112,6 +112,25 @@ mod tests {
     use bson::oid::ObjectId;
     use chrono::{UTC, TimeZone};
 
+    macro_rules! assert_eq_pretty {
+        ($left:expr, $right:expr) => {
+            let (left, right) = (&$left, &$right);
+            assert!(left == right,
+                "assertion failed: `(left == right)`\n\
+                left: {:#?}\n\
+                right: {:#?}",
+                left, right
+            );
+
+            assert!(right == left,
+                "assertion failed: `(right == left)`\n\
+                left: {:#?}\n\
+                right: {:#?}",
+                left, right
+            );
+        }
+    }
+
     #[test]
     fn operation_converts_noops() {
         let ref doc = doc! {
@@ -124,16 +143,16 @@ mod tests {
                 "msg" => "initiating set"
             }
         };
-        let operation = Operation::new(doc).unwrap();
 
-        match operation {
-            Operation::Noop { id, timestamp, document } => {
-                assert_eq!(-2135725856567446411i64, id);
-                assert_eq!(UTC.timestamp(1479419535, 0), timestamp);
-                assert_eq!("initiating set", document.get_str("msg").unwrap());
-            },
-            _ => panic!("Unexpected type of operation"),
-        }
+        let operation = Operation::new(&doc).unwrap();
+        assert_eq_pretty!(
+            operation,
+            Operation::Noop {
+                id: -2135725856567446411i64,
+                timestamp: UTC.timestamp(1479419535, 0),
+                document: &doc! { "msg" => "initiating set" }
+            }
+        );
     }
 
     #[test]
@@ -146,20 +165,40 @@ mod tests {
             "op" => "i",
             "ns" => "foo.bar",
             "o" => {
-                "_id" => (Bson::ObjectId(oid)),
+                "_id" => (Bson::ObjectId(oid.clone())),
                 "foo" => "bar"
             }
         };
         let operation = Operation::new(doc).unwrap();
 
-        match operation {
-            Operation::Insert { id, timestamp, namespace, document } => {
-                assert_eq!(-1742072865587022793i64, id);
-                assert_eq!(UTC.timestamp(1479561394, 0), timestamp);
-                assert_eq!("foo.bar", namespace);
-                assert_eq!("bar", document.get_str("foo").unwrap());
-            },
-            _ => panic!("Unexpected type of operation"),
-        }
+        assert_eq_pretty!(
+            operation,
+            Operation::Insert {
+                id: -1742072865587022793i64,
+                timestamp: UTC.timestamp(1479561394, 0),
+                namespace: "foo.bar",
+                document: &doc! {
+                    "_id" => (Bson::ObjectId(oid)),
+                    "foo" => "bar"
+                }
+            }
+        );
+
+        // Compare these
+        // assert_eq!(
+        //     operation,
+        //     Operation::Database {
+        //         id: 2013,
+        //         namespace: "hello",
+        //     }
+        // );
+
+        // assert_eq_pretty!(
+        //     operation,
+        //     Operation::Database {
+        //         id: 2013,
+        //         namespace: "hello",
+        //     }
+        // );
     }
 }
