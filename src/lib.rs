@@ -56,17 +56,14 @@ pub enum Kind<'a> {
 impl<'a> Operation<'a> {
     pub fn new(document: &'a bson::Document) -> Result<Operation<'a>> {
         let op = try!(document.get_str("op"));
-
-        let kind = try!(Kind::parse(op, document));
-        let h = try!(document.get_i64("h"));
         let ts = try!(document.get_time_stamp("ts"));
-        let o = try!(document.get_document("o"));
 
         Ok(Operation {
-            id: h,
+            id: try!(document.get_i64("h")),
+            document: try!(document.get_document("o")),
+
             timestamp: timestamp_to_datetime(ts),
-            document: o,
-            kind: kind
+            kind: try!(Kind::parse(op, document)),
         })
     }
 }
